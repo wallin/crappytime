@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+   <head>
+      <title>API Doc - TK Pro</title>
+      <style type="text/css">
+         table { border-collapse: collapse; }
+         tr.cmd { background-color: #EEE; }
+      </style>
+   </head>
+   <body>
+      <h1>Welcome to TK Pro web API documenation</h1>
+      <p>
+      Commands are sent to the server via the <code>q</code> (as in 'query') parameter.
+      </p>
+      <h2>Command overview</h2>
+      <table>
+         <thead>
+            <tr>
+               <th>Command (q)</th>
+               <th>Parameters</th>
+               <th>Description</th>
+               <th>Return data</th>
+            </tr>
+         </thead>
+         <tbody>
+            <tr class="cmd">
+               <td>login</td>
+               <td>&nbsp;</td>
+               <td>Tries to login a user</td>
+               <td>Session ID</td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>lu</td>
+               <td>User name</td>
+               <td>&nbsp;</td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>lp</td>
+               <td>Password token. Constructed as <code>MD5(MD5(password) + timestamp)</code></td>
+               <td>&nbsp;</td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>ts</td>
+               <td>Current timestamp in seconds</code></td>
+               <td>&nbsp;</td>
+            </tr>
+
+
+            <tr class="cmd">
+               <td>validate*</td>
+               <td>&nbsp;</td>
+               <td>Validates a previously created session (stored in a cookie or similar)</td>
+               <td>Session ID</td>
+            </tr>
+
+
+            <tr class="cmd">
+               <td>info*</td>
+               <td>&nbsp;</td>
+               <td>Gets information on the total amount of registrered time</td>
+               <td>Time info entry (see below)</td>
+            </tr>           
+            <tr class="cmd">
+               <td>summary*</td>
+               <td>&nbsp;</td>
+               <td>Gets a summary of registrered time period</td>
+               <td>Array with Summary data entries. (see below) </td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>y</td>
+               <td>Year (four digits, eg. 2010)</code></td>
+               <td>&nbsp;</td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>pt</td>
+               <td>Time period. Either "m" for month or "w" for week</code></td>
+               <td>&nbsp;</td>
+            </tr>
+
+            <tr class="cmd">
+               <td>period*</td>
+               <td>&nbsp;</td>
+               <td>Gets registrered time for a specific period</td>
+               <td>Array with Time data entries (see below) </td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>y</td>
+               <td>Year</code></td>
+               <td>&nbsp;</td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>p</td>
+               <td>Period number (two digits, eg. 03)</td>
+               <td>&nbsp;</td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>pt</td>
+               <td>Time period. Either "m" for month or "w" for week</td>
+               <td>&nbsp;</td>
+            </tr>
+            <tr class="cmd">
+               <td>settings*</td>
+               <td>&nbsp;</td>
+               <td>Gets user settings and in/out time for today</td>
+               <td>&nbsp;</td>
+            </tr>
+            <tr class="cmd">
+               <td>update*</td>
+               <td>&nbsp;</td>
+               <td>Updates or adds new time. Provide date + any combination of the additional parameters</td>
+               <td>&nbsp;</td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>ud</td>
+               <td>Required. Date to be updated eg. <code>2010-01-13</code></td>
+               <td>&nbsp;</td>
+            </tr>
+                        <tr>
+               <td>&nbsp;</td>
+               <td>ui</td>
+               <td>In time eg. <code>07:59</code></td>
+               <td>&nbsp;</td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>uo</td>
+               <td>Out time</td>
+               <td>&nbsp;</td>
+            </tr>
+            <tr>
+               <td>&nbsp;</td>
+               <td>ul</td>
+               <td>Lunch time</td>
+               <td>&nbsp;</td>
+            </tr>            
+            <tr>
+               <td>&nbsp;</td>
+               <td>ut</td>
+               <td>Type of time. Can be <code>N, V, S, H, A</code>. See 'Time type enum' below)</td>
+               <td>&nbsp;</td>
+            </tr>
+          </tbody>
+      </table>
+      <p>
+      * Command required session ID (sid) to be sent as a parameter
+      </p>
+      <h2>Server response</h2>
+      Server return value are in JSON format and contains three fields:
+      <pre>
+{
+   "data",    &lt;array&gt;
+   "error",   &lt;boolean&gt;
+   "message"  &lt;string&gt;
+}
+      </pre>
+      <h2>Types</h2>
+      <h3>Time info entry </h3>
+
+      <pre>
+{
+   min, (Earliest date with registered time: &lt;YYYY-MM-DD&gt;)
+   max, (Latest date with registered time: &lt;YYYY-MM-DD&gt;)
+}
+      </pre>
+      
+      <h3>Time data entry (TDE)</h3>
+
+      <pre>
+{
+   d,  (Date: YYY-MM-DD)
+   t,  (Time type enum: [N, V, S, H, A])
+   i,  (Time in: HH:MM)
+   o,  (Time out: HH:MM)
+   s,  (Sum of worked time in minutes: &lt;integer&gt;)
+}
+      </pre>
+      <h3>Summary data entry</h3>
+<pre>
+{
+   p, (Period number: &lt;integer&gt;)
+   s, (Period start date: &lt;text&gt;)
+   e, (Period end date: &lt;text&gt;)
+   h, (Total time worked during period: &lt;integer&gt; minutes)
+   f, (Flex time change during period: &lt;integer&gt; minutes)
+   v, (Vacation during period: &lt;integer&gt; days)
+   l, (Sickleave during period: &lt;integer&gt; days)
+}
+</pre>
+      <h3>Time type enum</h3>
+      <pre>
+[
+   N, (Normal time)
+   V, (Vacation, resets in/out time)
+   S, (Sickleave)
+   H, (Public holiday. Weekends are automatically of this type)
+   A, (Absent all day)
+]
+</pre>
+   </body>
+</html>

@@ -1,0 +1,1027 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+   <head>
+      <title>TK Pro</title>
+      <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+      <script type="text/javascript" src="res/js/jquery-1.3.2.min.js"></script>
+      <script type="text/javascript" src="res/js/flot/jquery.flot.min.js"></script>
+      <script type="text/javascript" src="res/js/jquery.scrollTo.js"></script>
+      <script type="text/javascript" src="res/js/jquery.jsonp.min.js"></script>
+      <script type="text/javascript" src="res/js/md5-min.js"></script>
+      <script type="text/javascript" src="res/js/window.js"></script>
+      <script type="text/javascript" src="res/js/getweek.js"></script>
+      <!--[if IE]><script language="javascript" type="text/javascript" src="res/js/flot/excanvas.min.js"></script><![endif]-->
+      <link rel="stylesheet" href="res/css/main.css" type="text/css"></script>
+      <script type="text/javascript">
+      /*
+       * TODO:s
+       *  - Figure out a way of getting rid of the tedious document.* -operations for creating new elements
+       *  - Make a 'today'-module wich displays remaining worktime, registers time today
+       */
+
+         /* Save some typing by shortening 'document' operations */
+         var d = document;
+         d.cE  = document.createElement;
+         d.cT  = document.createTextNode;
+         d.gID = document.getElementById;
+         
+         var Server = {
+            url: "http://sewa.se/time/api/",
+            command: {
+               login: "login",
+               summary: "summary",
+               time: "period",
+               info: "info",
+               update: "update"
+            }
+         };
+         var Clock = {
+            year: 0,
+            week: 0,
+            month: 0,
+            day: 0,
+            hour: 0,
+            min:  0,
+            dateObj: false,
+            init: function() {
+               Clock.dateObj = new Date();
+               Clock.year = Clock.dateObj.getFullYear();
+               Clock.week = Clock.dateObj.getWeek(); /* In getweek.js */
+               Clock.month = Clock.dateObj.getMonth()+1;
+               Clock.day = Clock.dateObj.getDate();
+               Clock.hour = Clock.dateObj.getHours();
+               Clock.min = Clock.dateObj.getMinutes();
+               Clock.timer = setTimeout(Clock.init, 2000);
+               $(document).trigger("Clock.minute");
+            },
+            today: function(string) {
+               var parts = string.split("-");
+               return (parts[0] == Clock.year &&
+                        parts[1] == Clock.month &&
+                        parts[2] == Clock.day);
+            }
+         };         
+         var Utils = {
+            zeropad: function(number) {
+               return (number < 10) ? "0"+number : "" + number;
+            },
+            min2ts: function(min) {
+               var h = min < 0 ?
+                  Math.ceil(min / 60) :
+                  Math.floor(min / 60);
+               var m = Math.round(Math.abs(min) % 60);
+               m = Utils.zeropad(m);
+               if(h === 0 && min < 0) { h = '-'+h; }
+               return  h + ":" + m + "h";
+            },
+            min2tsh: function(min) {
+               var h = min < 0 ?
+                  Math.ceil(min / 60) :
+                  Math.floor(min / 60);
+               var m = Math.round(((Math.abs(min) % 60)*100) / 60);
+               m = Utils.zeropad(m);
+               if(h === 0 && min < 0) { h = '-'+h; }
+               return  h + "." + m + "h";
+            },
+            ts2min: function(string) {
+               var parts = string.split(":");
+               if(parts[0] && parts[1]) {
+                  return (parts[0])*60 + (parts[1]);
+               }
+               return 0;
+
+            },
+            setTitle: function(str) {
+               if(str != "") { str = str + " - "; }
+               document.title = str + "TK Pro";
+            }
+         };
+         var wdata = [{w: '49', s: "30 nov", e: "4 dec", h: 2473, f: 73, v: 1, l: 0}, {w: '50', s: "7", e: "11 dec", h: 2337, f: -63, v: 0, l: 0}];
+         var weeklist = {
+            name: "year",
+            selected: false,
+            selected_type: false,
+            summary: { hours: 0, flex: 0, vac: 0, sick: 0 },
+            data: false,
+            init: function(tag_id) {
+               weeklist.window = WinManager.create(weeklist.name, tag_id, { name: "Tid", round:true, title: true, gutter: true});
+               weeklist.window.title.innerHTML = "<h2>Översikt<h2>";
+               weeklist.items = d.cE('ul');
+               weeklist.items.className = "plist";
+
+               weeklist.hourFormatFunc = getCookie("weeklist_minbase") == "100" ? Utils.min2tsh : Utils.min2ts;
+               //weeklist.totals = d.gID("summary");
+               weeklist.window.canvas.appendChild(weeklist.items);
+               $(document).bind("timedata.summary.loading", weeklist.refresh);
+               $(document).bind("timedata.summary.loaded", weeklist.update);
+               $(document).bind("timedata.type.change", weeklist.setType);
+               $(document).bind("timedata.period.change", weeklist.setPeriod);
+               $(document).bind("connection.error", weeklist.error);
+               /* Create type selector */
+               var ul = d.cE('ul');
+               ul.className = "typeselector";
+               var li = d.cE('li');
+               li.className = "psel_m";
+               var a  = d.cE('a');
+               a.href = "javascript:;";
+               a.onclick = weeklist.clickHandler_type;
+               a._type = "m";
+               a.appendChild(d.cT('månad'));
+               li.appendChild(a);
+               ul.appendChild(li);
+               li = d.cE('li');
+               li.className = "psel_w";
+               a  = d.cE('a');
+               a.href = "javascript:;";
+               a.onclick = weeklist.clickHandler_type;
+               a._type = "w";
+               a.appendChild(d.cT('vecka'));
+               li.appendChild(a);
+               ul.appendChild(li);
+               li = d.cE('li');
+               li.className = "today";
+               a  = d.cE('a');
+               a.href = "javascript:;";
+               a.onclick = timedata.today;
+               a.appendChild(d.cT('idag'));
+               li.appendChild(a);
+               ul.appendChild(li);
+               weeklist.window.title.appendChild(ul);
+            },
+            destroy: function() {
+               $(document).unbind("timedata.summary.loading", weeklist.refresh);
+               $(document).unbind("timedata.summary.loaded", weeklist.update);
+               $(document).unbind("timedata.type.change", weeklist.setType);
+               $(document).unbind("timedata.period.change", weeklist.setPeriod);
+               $(document).unbind("connection.error", weeklist.error);
+               WinManager.destroy(weeklist.name);
+               weeklist.window = null;
+            },
+            refresh: function() {
+               weeklist.reset();
+               $(weeklist.window.canvas).addClass("loading");
+            },
+            reset: function() {
+               weeklist.summary.hours = 0;
+               weeklist.summary.flex  = 0;
+               weeklist.summary.vac   = 0;
+               weeklist.summary.sick  = 0;
+               while (weeklist.items.hasChildNodes()) {
+                  weeklist.items.removeChild(weeklist.items.lastChild);
+               }
+               while (weeklist.window.gutter.hasChildNodes()) {
+                  weeklist.window.gutter.removeChild(weeklist.window.gutter.lastChild);
+               }
+            },
+            error: function() {
+               weeklist.reset();
+               weeklist.window.canvas.className = 'failed';
+            },
+            update: function() {
+               var data = timedata.summary;
+               weeklist.reset();
+               clearTimeout(weeklist._timer);
+               $(weeklist.window.canvas).removeClass('loading');
+
+               /* Build data */
+               var len = data.length;
+               for (var i = 0; i < len; i++) {
+                  weeklist.items.appendChild(weeklist.createListItem(data[i]));
+               }
+               /* Create list */
+               var tot = d.cE("strong");
+               tot.appendChild(d.cT(weeklist.hourFormatFunc(weeklist.summary.hours)));
+
+               var weekh = d.cE("span");
+               weekh.className = "weak";
+               weekh.appendChild(d.cT('('+Utils.min2ts(weeklist.summary.hours/data.length) + "/vecka)"));
+
+               var flex = weeklist.createTimeItem((weeklist.summary.flex >= 0) ? "pos" : "neg", weeklist.hourFormatFunc(weeklist.summary.flex));
+               var cleardiv = d.cE("div");
+               cleardiv.className = "clear";
+               weeklist.window.gutter.appendChild(tot);
+               if(data.length > 0) {
+                  weeklist.window.gutter.appendChild(weekh);
+               }
+               weeklist.window.gutter.appendChild(flex);
+
+               if(weeklist.summary.vac > 0) {
+                  var vac  = weeklist.createTimeItem("vac", weeklist.summary.vac + "d");
+                   weeklist.window.gutter.appendChild(vac);
+               }
+               if(weeklist.summary.sick > 0) {
+                  var sick = weeklist.createTimeItem("sick", weeklist.summary.sick + "d");
+                  weeklist.window.gutter.appendChild(sick);
+               }
+               weeklist.setPeriod();
+               weeklist.window.gutter.appendChild(cleardiv);
+            },
+            createListItem: function(data) {
+               var item   = d.cE("li");
+               var weekno = d.cE("strong");
+               var days   = d.cE("span");
+               var cleardiv = d.cE("div");
+               var prefix = timedata.type == "w" ? "v" : "";
+               cleardiv.className = "clear";
+
+               weekno.appendChild(d.cT(prefix + data.p));
+
+               days.className = "weak";
+               days.appendChild(d.cT('('+data.s + ' - ' + data.e+')'));
+
+               item.appendChild(weekno);
+               item.appendChild(days);
+               if(data.h !== 0) {
+                  var ftime = weeklist.createTimeItem((data.f >= 0) ? "pos" : "neg", weeklist.hourFormatFunc(data.f));
+                  $(ftime).click(weeklist.toggleHourFormat);
+                  item.appendChild(ftime);
+               }
+               if(data.v > 0) {
+                  var vac = weeklist.createTimeItem("vac", data.v + "d");
+                  item.appendChild(vac);
+               }
+               if(data.l > 0) {
+                  var sick = weeklist.createTimeItem("sick", data.l + "d");
+                  item.appendChild(sick);
+               }
+
+               item.appendChild(cleardiv);
+               item.onclick = weeklist.clickHandler;
+               item.id = data.p;
+
+               weeklist.summary.hours += data.h;
+               weeklist.summary.flex  += data.f;
+               weeklist.summary.vac   += data.v;
+               weeklist.summary.sick  += data.l;
+
+               return item;
+            },
+            createTimeItem: function(type, data) {
+               var item  = d.cE("em");
+               item.className = type;
+               item.appendChild(d.cT(data));
+               return item;
+            },
+            clickHandler: function(week) {
+               if(typeof(week) != "number") {
+                  /* Week was set by onclick event */
+                  week = this.id;
+               } else {
+                  week = Utils.zeropad(week);
+                  $(weeklist.window.canvas).scrollTo("#"+week, 200);
+               }
+               nav.sendCommand(timedata.year, timedata.type + "" + week);
+            },
+            setPeriod: function() {
+               var period = timedata.period;
+               $(".plist > li").removeClass("selected");
+               $(".plist > #"+period).addClass("selected");
+            },
+            clickHandler_type: function() {
+               nav.sendCommand(timedata.year, this._type);
+               this.blur();
+            },
+            setType: function() {
+               var type = timedata.type;
+               $(".typeselector > li").removeClass("pselected");
+               $(".psel_"+type).addClass("pselected");
+            },
+            toggleHourFormat: function(e) {
+               e.preventDefault();
+               if(weeklist.hourFormatFunc == Utils.min2ts) {
+                  setCookie("weeklist_minbase", "100");
+                  weeklist.hourFormatFunc = Utils.min2tsh;
+               } else {
+                  setCookie("weeklist_minbase", "60");
+                  weeklist.hourFormatFunc = Utils.min2ts;
+               }
+               weeklist.update();
+               return false;
+            }
+         };
+
+         var daylist = {
+            name: "week",
+            hourFormatFunc: false,
+            init: function(tag_id) {
+               daylist.window = WinManager.create(daylist.name, tag_id, { name: "Vecka", round:true, title: true, gutter: true});
+               daylist.window.title.innerHTML = "<h2>Välj vecka</h2>";
+               daylist.hourFormatFunc = getCookie("daylist_minbase") == "100" ? Utils.min2tsh : Utils.min2ts;
+               $(document).bind("timedata.data.loading", daylist.refresh);
+               $(document).bind("timedata.data.loaded", daylist.update);
+               $(document).bind("connection.error", daylist.error);
+               //$(document).bind("timedata.summary.loading", daylist.reset);
+            },
+            destroy: function() {
+               $(document).unbind("timedata.data.loading", daylist.refresh);
+               $(document).unbind("timedata.data.loaded", daylist.update);
+               $(document).unbind("connection.error", daylist.error);
+               //$(document).unbind("timedata.summary.loading", daylist.reset);
+               daylist.window = null;
+               WinManager.destroy(daylist.name);
+            },
+            error: function() {
+               daylist.window.canvas.className = 'failed';
+            },
+            update: function() {
+               var data = timedata.data;
+               clearTimeout(daylist._timer);
+               $(daylist.window.canvas).removeClass('loading');
+               daylist.reset();
+               if(data.length > 0) {
+                  var table = d.cE('table');
+                  var thead = d.cE('thead');
+                  var tbody = d.cE('tbody');
+                  var tfoot = d.cE('tfoot');
+                  /* Create header */
+                  var tr = d.cE("tr");
+                  var day = d.cE('th');
+                  var intime = d.cE('th');
+                  var outtime = d.cE('th');
+                  var sum = d.cE('th');
+                  var type = d.cE('th');
+
+                  day.appendChild(d.cT("Dag"));
+                  intime.appendChild(d.cT("In"));
+                  outtime.appendChild(d.cT("Ut"));
+                  sum.appendChild(d.cT("Tot."));
+                  type.appendChild(d.cT("Anm."));
+                  tr.appendChild(day);
+                  tr.appendChild(intime);
+                  tr.appendChild(outtime);
+                  tr.appendChild(sum);
+                  tr.appendChild(type);
+                  thead.appendChild(tr);
+                  /* Append data */
+                  var item;
+                  var weeksum = 0;
+                  for(var i in data) {
+                     item = daylist.createListItem(data[i]);
+                     item.onclick = daylist.clickHandler;
+                     tbody.appendChild(item);
+                     weeksum += data[i].s;
+                  }
+                  /* Create footer */
+                  item = daylist.createListItem({ d: "", o: "", i: "", s: weeksum, t: "" });
+                  tfoot.appendChild(item);
+                  timeform.setFormData(0);
+                  table.appendChild(thead);
+                  table.appendChild(tbody);
+                  table.appendChild(tfoot);
+                  daylist.window.canvas.appendChild(table);
+               }
+               daylist.setWeek();
+            },
+            createListItem: function(data) {
+               var tr = d.cE("tr");
+               var day = d.cE('th');
+               var intime = d.cE('td');
+               var outtime = d.cE('td');
+               var sum = d.cE('td');
+               var type = d.cE('td');
+               day.appendChild(d.cT(data.d));
+               var instr  = (data.i).substring(0,5);
+               var outstr = (data.o).substring(0,5);
+               if(Utils.ts2min(instr) != 0) {
+                  intime.appendChild(d.cT(instr));
+               } else if(instr) {
+                  intime.appendChild(d.cT("-"));
+               }
+               if(Utils.ts2min(outstr) != 0) {
+                  outtime.appendChild(d.cT(outstr));
+               } else if(outstr){
+                  outtime.appendChild(d.cT("-"));
+               }
+               if((data.s) !== 0) {
+                  var cls = (data.s -(User.settings.target)) < 0 ? "neg" : "pos";
+                  sum.appendChild(weeklist.createTimeItem(cls, daylist.hourFormatFunc(data.s)));
+                  $(sum).click(daylist.toggleHourFormat);
+               }
+               /*  */
+               else if(Clock.today(data.d)) {
+                  daylist.remaining = weeklist.createTimeItem("neu", daylist.hourFormatFunc(-Today.remaining()));
+                  sum.appendChild(daylist.remaining);
+                  $(document).bind("Clock.minute", function() { 
+                     if(daylist.remaining) {
+                        daylist.remaining.childNodes[0].nodeValue = daylist.hourFormatFunc(-Today.remaining());
+                     }
+                  });
+               }            
+               if(data.t == 'V' || data.t == 'S') {
+                  type.appendChild(d.cT(data.t == 'V' ? "Sem." : "Sjuk", " "));
+               } else {
+                  //type.appendChild(d.cT(data.t));
+               }
+               tr.appendChild(day);
+               tr.appendChild(intime);
+               tr.appendChild(outtime);
+               tr.appendChild(sum);
+               tr.appendChild(type);
+               tr.className = data.t;
+               tr.title = "Klicka för att redigera";
+               tr._data = data; /* For internal usage */
+               tr.id = data.d;
+               return tr;
+            },
+            reset: function() {
+               daylist.setWeek();
+               timeform.setFormData(0);
+               while (daylist.window.canvas.hasChildNodes()) {
+                  daylist.window.canvas.removeChild(daylist.window.canvas.lastChild);
+               }
+            },
+            refresh: function() {
+               daylist.reset();
+               $(daylist.window.canvas).addClass('loading');
+            },
+            setWeek: function() {
+               var title = timedata.period ? "Tid " : "Välj ";
+               var prefix = timedata.type == "w" ? "vecka " : "månad ";
+               var value = timedata.period ? timedata.period : "";
+               daylist.window.title.innerHTML = '<h2>'+title+prefix+value+'</h2>';
+            },
+            clickHandler: function() {
+               if(daylist.selected !== null) {
+                  $(daylist.selected).removeClass("selected");
+               }
+               $(daylist.input).show();
+               daylist.selected = this;
+               timeform.setFormData(daylist.selected._data);
+               $(daylist.selected).addClass("selected");
+            },
+            toggleHourFormat: function(e) {
+               e.preventDefault();
+               if(daylist.hourFormatFunc == Utils.min2ts) {
+                  setCookie("daylist_minbase", "100");
+                  daylist.hourFormatFunc = Utils.min2tsh;
+               } else {
+                  setCookie("daylist_minbase", "60");
+                  daylist.hourFormatFunc = Utils.min2ts;
+               }
+               daylist.update();
+               return false;
+            }
+         };
+
+         var timedata = {
+            init: function() {
+               timedata.year = Clock.year;
+               timedata.period = Utils.zeropad(Clock.week);
+               timedata.summary = false;
+               timedata.data = false;
+               timedata.type = 'w';
+               $(document).trigger("timedata.type.change");
+               timedata.getMinMaxYear();
+               $(document).bind("timedata.invalid", timedata.refresh);
+               if(nav.getHash() == '') {
+                  nav.sendCommand(timedata.year, timedata.type + "" + timedata.period);
+               }
+            },
+            today: function() {
+               var period = timedata.type == "m" ? Clock.month : Clock.week;
+               nav.sendCommand( Clock.year, timedata.type + "" + Utils.zeropad(period));
+            },
+            refresh: function() {
+               timedata.getMinMaxYear();
+               timedata.getTimeSummary();
+               timedata.getTime();
+            },
+            getMinMaxYear: function() {
+               request.send({ q: Server.command.info }, timedata.setMinMaxYear);
+               $(document).trigger("timedata.minmax.loading");
+            },
+            setMinMaxYear: function(data) {
+               if(data.error === true) {
+                  alert(data.message);
+                  return false;
+               }
+               data = data.data;
+               if(data.min && data.max) {
+                  timedata.minYear = data.min.substring(0, data.min.indexOf('-'));
+                  timedata.maxYear = data.max.substring(0, data.max.indexOf('-'));
+               } else {
+                  timedata.minYear = Clock.year;
+                  timedata.maxYear = Clock.year;
+               }
+               $(document).trigger("timedata.minmax.loaded");
+            },
+
+            getTimeSummary: function() {
+               request.send({q: Server.command.summary, y:timedata.year, pt:timedata.type }, timedata.setTimeSummary);
+               $(document).trigger("timedata.summary.loading");
+            },
+            setTimeSummary: function(data) {
+               if(data.error === true) {
+                  alert(data.message);
+                  return false;
+               }
+               timedata.summary = data.data;
+               $(document).trigger("timedata.summary.loaded");
+            },
+
+            getTime: function() {
+               request.send({ q: Server.command.time, y: timedata.year, p: timedata.period, pt:timedata.type }, timedata.setTime);
+               $(document).trigger("timedata.data.loading");
+            },
+            setTime: function(data) {
+               if(data.error === true ) {
+                  alert(data.message);
+                  return false;
+               }
+               timedata.data = data.data;
+               $(document).trigger("timedata.data.loaded");
+            },
+
+            setYear: function(year) {
+               if(timedata.year != year || !timedata.summary) {
+                  timedata.year = year;
+                  timedata.getTimeSummary();
+               }
+            },
+            setPeriod: function(period) {
+               if(timedata.period != period || !timedata.data) {
+                  timedata.period = period;
+                  timedata.getTime();
+               }
+            },
+            handleCommand: function(action) {
+               if(action !== null) {
+                  var type = action.param.substring(0,1);
+                  var peri = action.param.substring(1);
+                  if(type && type != timedata.type) {
+                     timedata.type = type;
+                     $(document).trigger("timedata.type.change");
+                     /* Type has changed, summary data is invalid */
+                     timedata.summary = false;
+                     timedata.data = false;
+                  }
+                  if(action.command != "") {
+                     timedata.setYear(action.command);
+                  }
+                  if(peri) {
+                     timedata.setPeriod(peri);
+                     $(document).trigger("timedata.period.change");
+                  } else {
+                     timedata.data = false;
+                     timedata.period = false;
+                     $(document).trigger("timedata.period.change");
+                     $(document).trigger("timedata.data.loaded");
+                  }
+               }
+            }
+         };
+
+         var timeform = {
+            name: "timeform",
+            init: function() {
+               daylist.window.gutter.innerHTML = timeform.html;
+	            daylist.input = d.gID("input");
+	            daylist.input.onsubmit = timeform.validateFormData;
+	            timeform.setFormData(0);
+            },
+            update: function(data) {
+               if(data.error !== true) {
+                  /* Data has been modified, let people know */
+                  $(document).trigger("timedata.invalid");
+               }
+               else {
+                  alert(data.message);
+               }
+            },
+	         setFormData: function(data) {
+	            var date = "";
+	            var intime = "";
+	            var outtime = "";
+	            var type = "N";
+	            if(typeof(data) == "undefined") {
+	               var now = new Date();
+	               date = now.getFullYear() + "-" + (now.getMonth()+1) + "-" + now.getDate();
+	               intime = Clock.hour + ":" + Clock.min;
+	            } else if (data !== 0){
+	               date = data.d;
+	               intime = data.i;
+	               outtime = data.o;
+                  if(data.t == '') {
+                     if(intime.substring(0,5) == "00:00") { intime = Clock.hour + ":" + Utils.zeropad(Clock.min); }
+                     else if(outtime.substring(0,5) == "00:00") { outtime = Clock.hour + ":" + Utils.zeropad(Clock.min); }
+                  }
+	               type = data.t;
+	            } else {
+	               $(daylist.input).hide();
+	            }
+	            $("#date").val(date);
+	            $("#intime").val(intime);
+	            $("#outtime").val(outtime);
+	            $("#type").val(type);
+	         },
+            validateFormData: function(e) {
+               /* If we're changing todays values, let people now */
+               if(Clock.today($("#date").val()) === true) {
+                  $(document).trigger("timedata.today.invalid");
+               }
+               request.post($(daylist.input).serializeArray(), timeform);
+               e.preventDefault();
+            },
+            html: '<form id="input" action="http://localhost/time/do.php" method="POST">' +
+               '<input type="hidden" name="q" value="update"></input>' +
+               'Datum: ' +
+               '<input id="date" name="ud" type="text" size=8>' +
+               'In: <input id="intime" name="ui" type="text" size=5>' +
+               'Ut: <input id="outtime" name="uo" type="text" size=5>' +
+               '<select id="type" name="ut">' +
+               '<option value="N">Normal</option>' +
+               '<option value="H">Helgdag</option>' +
+               '<option value="V">Semester</option>' +
+               '<option value="S">Sjuk</option>'+
+               '<option value="A">Frånvarande</option>'+
+            '</select>'+
+            '<input type="submit" value="spara">'+
+            '</form>'
+         };
+
+         var graph = {
+            name: "graph",
+            options: {
+               series: {
+                  bars: { show: true },
+                  label: "Tid / min"
+               },
+               grid: {
+                  clickable: true,
+                  hoverable: true
+               },
+               xaxis: {
+                  min: 1,
+                  max: 53
+               }
+            },
+            init: function(tag_id) {
+               graph.window = WinManager.create(graph.name, tag_id, { round: true, title: true, name: "översikt", controls: true });
+               graph.window.title.innerHTML = "<h2>Diagram</h2>";
+               var o = d.cE('div');
+               o.id = "plot";
+               graph.window.canvas.appendChild(o);
+               $(document).bind("timedata.summary.loaded", graph.update);
+               $("#plot").bind("plotclick", graph.clickHandler);
+               $(document).bind("timedata.type.change", graph.setRange);
+            },
+            setRange: function() {
+               /* TODO: move min, max into timedata */
+               graph.options.xaxis.max = timedata.type == "m" ? 13 : 54;
+            },
+            destroy: function() {
+               $("#plot").bind("plotclick", graph.clickHandler);
+               $(document).unbind("timedata.summary.loaded", graph.update);
+               graph.window = null;
+               WinManager.destroy(graph.name);
+            },
+            update: function() {
+               if(!graph.window.open) { return false; }
+               var data = timedata.summary;
+               graph.data = new Array();
+               var len = data.length;
+               for (var i = 0; i < len; i++) {
+                  graph.data.push([data[i].p, data[i].f]);
+               }
+               $.plot($("#plot"), [ graph.data ], graph.options);
+            },
+            clickHandler: function (event, pos, item) {
+               if (item) {
+                  weeklist.clickHandler(item.datapoint[0]);
+               }
+            }
+         };
+
+         var options = {
+            name: "options",
+            init: function(tag_id) {
+               options.window = WinManager.create(options.name, tag_id, { round: true, name: "översikt"});
+               options.ylist = d.cE('select');
+               options.window.canvas.appendChild(options.ylist);
+               $(document).bind("timedata.minmax.loaded", options.update);
+               $(document).bind("timedata.summary.loaded", options.setYear);
+               /* Logout button */
+               var logout = d.cE('a');
+               logout.href = "javascript:;";
+               logout.onclick = User.logout;
+               logout.appendChild(d.cT('Logga ut'));
+               options.window.canvas.appendChild(logout);
+            },
+            destroy: function() {
+               WinManager.destroy(options.name);
+               $(document).unbind("timedata.minmax.loaded", options.update);
+            },
+            update: function() {
+               while (options.ylist.hasChildNodes()) {
+                  options.ylist.removeChild(options.ylist.lastChild);
+               }
+               for(var i = timedata.minYear; i <= timedata.maxYear; i++) {
+                  options.ylist.appendChild(options.createListItem(i));
+               }
+               options.ylist.onchange = options.clickHandler;
+               options.ylist.value=timedata.year;
+            },
+            createListItem: function(data) {
+               var li = d.cE('option');
+               li.value = data;
+               li.appendChild(d.cT(data));
+               return li;
+            },
+            clickHandler: function() {
+               var y = this.value;
+               nav.sendCommand(y);
+            },
+            setYear: function() {
+               options.ylist.value=timedata.year;
+            }
+         };
+
+         var User = {
+            init: function(window) {
+               User.settings = { target: 480, lunch: 35, name: ""};
+               if(typeof(window) != "undefined") {
+                  User.window = window;
+                  User.window.window.className="login";
+               }
+               /* Create login form */
+               User.form = d.cE('div');
+               User.form.id = 'auth';
+               User.form.innerHTML = User.formHTML;
+               window.canvas.appendChild(User.form);
+               $('#auth_submit').bind('click', User.submitForm);
+               /* If we find sid in cookie, then just go ahead */
+               $('#auth_user').val(getCookie("auth_user"));
+               var sid = getCookie('auth_sid');
+               if(sid != "") {
+                  User.validate(sid);
+               }
+               /* Else wait for credentials */
+            },
+            validate: function(inp_sid) {
+               /* Validate an old SID */
+               $("#auth_btns").addClass("loading");
+               request.post({q: "validate", sid:inp_sid }, User, User.error);
+            },
+            submitForm: function() {
+               var serv   = $('#auth_server').val();
+               var user   = $('#auth_user').val();
+               var pass   = $('#auth_pass').val();
+               if(serv) {
+                  Server.url = serv;
+               }
+               if(user && pass) {
+                  User.login(user, pass);
+               } else {
+                  alert('Var god fyll i användarnamn och lösenord');
+               }
+               return false;
+            },
+            login: function(user, pass) {
+               setCookie("auth_user", user);
+               $("#auth_btns").addClass("loading");
+               var time = new Date().getTime();
+               var token = hex_md5(hex_md5(pass) + time);
+               request.post({q: "login", lu: user, ts: time, lp: token }, User, User.error);
+            },
+            logout: function() {
+               request.sid = false;
+               setCookie("auth_sid", "");
+               state.disconnected();
+               User.window.window.className="login";
+               WinManager.minimize(User.window);
+            },
+            update: function(data) {
+               $("#auth_btns").removeClass("loading");
+               if(data.error === false && typeof(data.data.sid) != "undefined") {
+                  request.sid = data.data.sid;
+                  if(data.data.settings) {
+                     User.settings = data.data.settings;
+                  }
+                  setCookie("auth_sid", data.data.sid, 1);
+                  WinManager.minimize(User.window);
+                  User.window.window.className="";
+                  state.connected();
+               } else {
+                  alert(data.message);
+               }
+            },
+            error: function(xOptions, textStatus) {
+               $("#auth_btns").removeClass("loading");
+               var msg = (textStatus == "error") ?
+                  "Servern kunde inte hittas. V.v. kontrollera adressen" :
+                  "Serever svarade inte. Försök igen";
+               alert(msg);
+            },
+            formHTML:'<h2>Logga in</h2>'+
+            '<div class="section"><form id="auth_login">'+
+               '<h3>Server</h3>'+
+               '<input id="auth_server" type="text">'+
+               '<h3>Uppgifter</h3>'+
+               '<input id="auth_user" type="text" value=""><br>'+
+               '<input id="auth_pass" type="password" value="">'+
+               '<div id="auth_btns" class="buttonrow">'+
+                  '<input id="auth_submit" type="submit" value="Logga in">'+
+               '</div></form>'+
+            '</div>'
+         };
+
+         var state = {
+            connected: function() {
+               nav.init(timedata.handleCommand);
+               options.init('left_col');
+               weeklist.init('left_col');
+               graph.init('right_col');
+               daylist.init('right_col');
+               timeform.init();
+               timedata.init();
+               Today.init();
+            },
+            authorize: function() {
+               state.disconnected();
+               User.init();
+            },
+            disconnected: function() {
+               nav.destroy();
+               options.destroy();
+               weeklist.destroy();
+               daylist.destroy();
+               graph.destroy();
+               Today.destroy();
+            }
+         };
+
+         var request = {
+            sid: false,
+            send: function(options, callback, errfunc) {
+               if(request.sid !== false) {
+                  options.sid = request.sid;
+               }
+               callback = typeof(callback) == "function" ? callback : callback.update;
+               errfunc = typeof(errfunc) == "undefined" ? request.error : errfunc;
+               $.jsonp({
+                 url: Server.url,
+                 data: options,
+                 error: errfunc,
+                 callbackParameter: "callback",
+                 success: callback
+               });
+            },
+            post: function(options, callback, errfunc) {
+               if(request.sid !== false) {
+                  options.push({"name": "sid", "value": request.sid});
+               }
+               callback = typeof(callback) == "function" ? callback : callback.update;
+               errfunc = typeof(errfunc) == "undefined" ? request.error : errfunc;
+               $.jsonp({
+                 url: Server.url,
+                 data: options,
+                 error: errfunc,
+                 callbackParameter: "callback",
+                 success: callback
+               });
+            },
+            error: function(xOptions, textStatus) {
+               $(document).trigger("connection.lost");
+               alert(textStatus + ' occured');
+               $(document).trigger("connection.error");
+            }
+         };
+
+         var nav = {
+            expectedHash: "",
+            init: function(execFunc) {
+               nav.timer = setInterval(nav.checkHash, 400);
+               nav.executeAction = execFunc;
+            },
+            destroy: function() {
+               nav.expectedHash = "";
+               window.location.hash = "";
+               clearInterval(nav.timer);
+            },
+            getHash: function() {
+              var hash = window.location.hash;
+              return hash.substring(1); // remove #
+            },
+            sendCommand: function(cmd, prm) {
+               if(typeof(prm) == "undefined") {
+                  prm = "";
+               } else {
+                  prm = "/" + prm;
+               }
+               window.location.hash = "#" + cmd + prm;
+            },
+            getLinkTarget: function(link) {
+              return link.href.substring(link.href.indexOf('#')+1);
+            },
+
+            parseHash: function(hash) {
+               var ppos = hash.indexOf("/");
+               var cmd;
+               var prm;
+               if(ppos >= 0) {
+                  cmd = hash.substring(0, ppos);
+                  prm = hash.substring(ppos+1);
+               } else {
+                  cmd = hash;
+                  prm = "";
+               }
+               return { command: cmd, param: unescape(prm) };
+            },
+
+            checkHash: function() {
+               var theHash = nav.getHash();
+               if(theHash != nav.expectedHash)
+               {
+                  nav.expectedHash = theHash;
+                  var action = nav.parseHash(theHash);
+                  nav.executeAction(action);
+               }
+            }
+         };
+
+         var Today = {
+            intime: 0,
+            outtime: 0,
+            init: function() {
+               Today.onEvent();
+               $(document).bind("timedata.today.invalid", Today.onEvent);
+            },
+            destroy: function() {
+               $(document).unbind("timedata.today.invalid", Today.onEvent);
+            },
+            onEvent: function(){ request.send({q:"settings"}, Today.update); },
+            update: function(data) {
+               if(data) {
+                  Today.intime = data.data.today.int;
+                  Today.outtime = data.data.today.out;
+               }
+            },
+            remaining: function() {
+               var out = Today.outtime > 0 ?
+                  Today.outtime :
+                  (Clock.hour * 60 + Clock.min);
+
+               var worktime = Today.intime ?
+                  (out - Today.intime) : 0;
+               return (User.settings.target + User.settings.lunch) - worktime;            
+            }
+         };
+
+         window.onload = function() {
+            var head = WinManager.create('toolbar', 'head', {title: true, round: true});
+            head.title.innerHTML = '<h1>TK Pro</h1>';
+            try {
+               Clock.init();
+               User.init(head);
+            }
+            catch (err) { alert(err); }
+
+            $(document).bind("Clock.minute", function() {
+               Utils.setTitle(Utils.min2ts(Today.remaining()));
+            });
+         };
+
+         /* Simple cookie mgmt*/
+function setCookie(c_name,value,expiredays)
+{
+   var exdate=new Date();
+   exdate.setDate(exdate.getDate()+expiredays);
+   document.cookie=c_name+ "=" +escape(value)+
+   ((expiredays===null) ? "" : ";expires="+exdate.toGMTString());
+}
+
+function getCookie(c_name)
+{
+   if (document.cookie.length>0)
+   {
+      var c_start=document.cookie.indexOf(c_name + "=");
+      if (c_start!=-1)
+      {
+         c_start=c_start + c_name.length+1;
+         var c_end=document.cookie.indexOf(";",c_start);
+         if (c_end==-1) {
+            c_end=document.cookie.length;
+         }
+         return unescape(document.cookie.substring(c_start,c_end));
+      }
+   }
+   return "";
+}
+
+      </script>
+   </head>
+
+   <body>
+      <noscript>
+         Sorry, this application requires javascript enabled
+      </noscript>
+      <div id="head" class="two_column">
+      </div>
+      <div id="left_col" class="column">
+
+      </div>
+      <div id="right_col" class="column">
+
+      </div>
+   </body>
+</html>
